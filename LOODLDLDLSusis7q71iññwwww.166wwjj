@@ -1,0 +1,131 @@
+getgenv().Camlock = {
+    Enabled = false,
+    Offset = 7,  -- Prediction offset (studs)
+    Smoothness = 0.15,  -- Adjust for smoother tracking (lower = smoother)
+    FOV = 100,  -- Lock-on range
+}
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local UIS = game:GetService("UserInputService")
+
+-- Locked target variable
+local lockedTarget = nil
+
+-- Function to get the closest target in FOV
+local function GetTarget()
+    local closestTarget = nil
+    local closestDistance = getgenv().Camlock.FOV
+    local viewportCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local hrp = player.Character.HumanoidRootPart
+            local screenPos, onScreen = Camera:WorldToViewportPoint(hrp.Position)
+
+            if onScreen then
+                local dist = (Vector2.new(screenPos.X, screenPos.Y) - viewportCenter).Magnitude
+                if dist < closestDistance then
+                    closestDistance = dist
+                    closestTarget = hrp
+                end
+            end
+        end
+    end
+
+    return closestTarget
+end
+
+-- UI Creation
+local screenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+screenGui.Name = "CamlockGui"
+screenGui.ResetOnSpawn = false
+
+local button = Instance.new("TextButton", screenGui)
+button.Size = UDim2.new(0, 60, 0, 60)
+button.Position = UDim2.new(0.85, 0, 0.75, 0)
+button.Text = "🔓"  -- Default is unlocked
+button.BackgroundTransparency = 1  -- Fully transparent (no background)
+button.TextScaled = true
+button.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+-- Draggable UI
+local dragging, dragInput, dragStart, startPos
+
+local function updateInput(input)
+    local delta = input.Position - dragStart
+    button.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
+
+button.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = button.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+button.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+UIS.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateInput(input)
+    end
+end)
+
+-- Toggle Camlock
+button.MouseButton1Click:Connect(function()
+    if getgenv().Camlock.Enabled then
+        getgenv().Camlock.Enabled = false
+        lockedTarget = nil
+        button.Text = "🔓"  -- Show unlocked icon
+        warn("Camlock Disabled")
+    else
+        local target = GetTarget()
+        if target then
+            lockedTarget = target
+            getgenv().Camlock.Enabled = true
+            button.Text = "🔒"  -- Show locked icon
+            warn("Camlock Enabled on: " .. target.Parent.Name)
+        else
+            warn("No target found.")
+        end
+    end
+end)
+
+-- Smooth Lock-on Function
+local function LockOn()
+    if not getgenv().Camlock.Enabled or not lockedTarget then return end
+
+    -- Auto-reacquire target if lost
+    if not lockedTarget.Parent then
+        lockedTarget = GetTarget()
+        if not lockedTarget then
+            getgenv().Camlock.Enabled = false
+            button.Text = "🔓"  -- Show unlocked icon
+            return
+        end
+    end
+
+    -- Calculate predicted position
+    local targetVelocity = lockedTarget.Velocity
+    local predictedPos = lockedTarget.Position + (targetVelocity * (getgenv().Camlock.Offset / 60))
+
+    -- Smooth movement using Lerp
+    local newCFrame = CFrame.new(Camera.CFrame.Position, predictedPos)
+    Camera.CFrame = Camera.CFrame:Lerp(newCFrame, getgenv().Camlock.Smoothness)
+end
+
+-- Continuously update lock-on
+RunService.RenderStepped:Connect(LockOn)
